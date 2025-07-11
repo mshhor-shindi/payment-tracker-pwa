@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#4CAF50">
+  <link rel="manifest" href="manifest.json">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('service-worker.js');
+      });
+    }
+  </script>
+  <title>مدير الدفعات</title>
+  <style>
+    body { font-family: 'Arial', sans-serif; margin: 20px; background: #f4f4f4; }
+    h1 { text-align: center; }
+    form, table { width: 100%; max-width: 500px; margin: auto; }
+    input, button { width: 100%; padding: 10px; margin: 5px 0; }
+    table { border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background: #4CAF50; color: white; }
+    #export, #importExcel, #saveJson, #loadJson, #saveLocalFile { background-color: #2196F3; color: white; }
+    tr:hover { background-color: #ddd; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>مدير الدفعات</h1>
+  <form id="dataForm">
+    <input type="text" id="name" placeholder="الاسم" required>
+    <input type="number" id="count" placeholder="عدد الأفراد" required>
+    <input type="number" id="payment" placeholder="الدفعة" required>
+    <button type="submit">إضافة</button>
+    <button type="button" id="importExcel">استيراد من Excel</button>
+    <button type="button" id="export">تصدير إلى Excel</button>
+    <button type="button" id="saveJson">💾 حفظ كـ JSON</button>
+    <button type="button" id="loadJson">📂 تحميل JSON</button>
+    <button type="button" id="saveLocalFile">🔐 حفظ دائم داخل التطبيق</button>
+  </form>
+  <table id="dataTable">
+    <thead>
+      <tr>
+        <th>الاسم</th>
+        <th>عدد الأفراد</th>
+        <th>المطلوب</th>
+        <th>الدفعة</th>
+        <th>الفرق</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <input type="file" id="excelFile" accept=".xlsx,.xls" style="display:none">
+  <input type="file" id="jsonFile" accept=".json" style="display:none">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script>
+    let people = JSON.parse(localStorage.getItem('peopleData')) || [];
+    let editIndex = null;
+    const form = document.getElementById('dataForm');
+    const tableBody = document.querySelector('#dataTable tbody');
+
+    function saveToStorage() {
+      localStorage.setItem('peopleData', JSON.stringify(people));
+    }
+
+    function renderTable() {
+      tableBody.innerHTML = '';
+      people.forEach((p, index) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${p.name}</td>
+          <td>${p.count}</td>
+          <td>${p.count * 160}</td>
+          <td>${p.payment}</td>
+          <td>${p.payment - p.count * 160}</td>
+        `;
+        row.onclick = () => {
+          document.getElementById('name').value = p.name;
+          document.getElementById('count').value = p.count;
+          document.getElementById('payment').value = p.payment;
+          editIndex = index;
+        };
+        tableBody.appendChild(row);
+      });
+    }
+
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const name = document.getElementById('name').value;
+      const count = parseInt(document.getElementById('count').value);
+      const payment = parseInt(document.getElementById('payment').value);
+      if (editIndex !== null) {
+        people[editIndex] = { name, count, payment };
+        editIndex = null;
+      } else {
+        people.push({ name, count, payment });
+      }
+      saveToStorage();
+      renderTable();
+      form.reset();
+    };
+
+    document.getElementById('export').onclick = () => {
+      const ws = XLSX.utils.json_to_sheet(people.map(p => ({
+        الاسم: p.name,
+        عدد_الأفراد: p.count,
+        المطلوب: p.count * 160,
+        الدفعة: p.payment,
+        الفرق: p.payment - p.count * 160
+      })));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'التقرير');
+      XLSX.writeFile(wb, 'تقرير_الدفعات.xlsx');
+    };
+
+    document.getElementById('importExcel').onclick = () => {
+      document.getElementById('excelFile').click();
+    };
+
+    document.getElementById('excelFile').addEventListener('change', (e) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const imported = XLSX.utils.sheet_to_json(sheet, {header: 1});
+        const header = imported[0];
+        const nameIndex = header.findIndex(h => h.toString().trim() === 'الاسم');
+        const countIndex = header.findIndex(h => h.toString().trim() === 'عدد الأفراد');
+        if (nameIndex === -1 || countIndex === -1) {
+          alert("الملف لا يحتوي على الأعمدة المطلوبة: الاسم، عدد الأفراد");
+          return;
+        }
+        for (let i = 1; i < imported.length; i++) {
+          const row = imported[i];
+          if (row[nameIndex] && row[countIndex]) {
+            people.push({
+              name: row[nameIndex],
+              count: parseInt(row[countIndex]),
+              payment: 0
+            });
+          }
+        }
+        saveToStorage();
+        renderTable();
+      };
+      reader.readAsArrayBuffer(e.target.files[0]);
+    });
+
+    document.getElementById('saveJson').onclick = () => {
+      const blob = new Blob([JSON.stringify(people, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'البيانات.json';
+      a.click();
+    };
+
+    document.getElementById('loadJson').onclick = () => {
+      document.getElementById('jsonFile').click();
+    };
+
+    document.getElementById('jsonFile').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          people = JSON.parse(e.target.result);
+          saveToStorage();
+          renderTable();
+        } catch (err) {
+          alert("فشل في قراءة الملف");
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    document.getElementById('saveLocalFile').onclick = () => {
+      const blob = new Blob([JSON.stringify(people, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'data-storage.json';
+      a.click();
+    };
+
+    renderTable();
+  </script>
+</body>
+</html>
